@@ -1,0 +1,12 @@
+[package]
+name = "ssh-epark73-akdeng"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.102"
+clap = { version = "4.5.39", features = ["derive"] }
+color-eyre = "0.6.5"
+hmac = "0.12.1"
+rand = "0.9.1"
+sha2 = "0.10.9"
