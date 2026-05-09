@@ -4,6 +4,9 @@ pub mod kex;
 pub mod messages;
 pub mod crypto;
 pub mod data_primitives;
+pub mod network_driver;
+pub mod negotiation;
+pub mod pkg;
 
 pub const PROTOVERSION: &str = "2.0";
 pub const SOFTWAREVERSION: &str = "mssh_1.0";
@@ -17,6 +20,7 @@ pub fn check_and_inc(vec: &[u8], i: &mut usize, inc: &usize) -> Result<()> {
     Ok(())
 }
 
+pub const SSH_ED25519: &str = "ssh-ed25519";
 // From russh
 pub const DISCONNECT: u8 = 1;
 #[allow(dead_code)]

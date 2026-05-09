@@ -2,9 +2,12 @@ use std::{hash::Hash, str::FromStr};
 
 use anyhow::{Error, Result};
 
+use ed25519_dalek::Signature;
 use rand::{TryRngCore, rng, rngs::{OsRng, ThreadRng}};
 
-use crate::{DISCONNECT, KEXINIT, NEWKEYS, SSH_DISCONNECT_AUTH_CANCELLED_BY_USER, SSH_DISCONNECT_BY_APPLICATION, SSH_DISCONNECT_COMPRESSION_ERROR, SSH_DISCONNECT_CONNECTION_LOST, SSH_DISCONNECT_HOST_NOT_ALLOWED_TO_CONNECT, SSH_DISCONNECT_ILLEGAL_USER_NAME, SSH_DISCONNECT_MAC_ERROR, SSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE, SSH_DISCONNECT_PROTOCOL_ERROR, SSH_DISCONNECT_PROTOCOL_VERSION_NOT_SUPPORTED, SSH_DISCONNECT_RESERVED, SSH_DISCONNECT_SERVICE_NOT_AVAILABLE, SSH_DISCONNECT_TOO_MANY_CONNECTIONS, check_and_inc, data_primitives::{SshBool, SshNameList, SshString, SshUint32}};
+use crate::{DISCONNECT, KEXINIT, NEWKEYS, SSH_DISCONNECT_AUTH_CANCELLED_BY_USER, SSH_DISCONNECT_BY_APPLICATION, SSH_DISCONNECT_COMPRESSION_ERROR, SSH_DISCONNECT_CONNECTION_LOST, SSH_DISCONNECT_HOST_NOT_ALLOWED_TO_CONNECT, SSH_DISCONNECT_ILLEGAL_USER_NAME, SSH_DISCONNECT_MAC_ERROR, SSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE, SSH_DISCONNECT_PROTOCOL_ERROR, SSH_DISCONNECT_PROTOCOL_VERSION_NOT_SUPPORTED, SSH_DISCONNECT_RESERVED, SSH_DISCONNECT_SERVICE_NOT_AVAILABLE, SSH_DISCONNECT_TOO_MANY_CONNECTIONS, SSH_ED25519, check_and_inc, data_primitives::{SshBool, SshNameList, SshString, SshUint32}};
+
+
 
 pub trait Msg: Sized {
     fn get_msg_number() -> u8;
@@ -262,24 +265,93 @@ impl DisconnectReasonCodes {
     }
 }
 
-struct BinaryPacket {
-    packet_length: u32,
-    padding_length: u8,
-    payload: Vec<u8>,
-    padding: Vec<u8>,
-    mac_or_tag: Option<Vec<u8>>,
-    seq_num: u32
+pub struct Ed25519PublicKeyBlob {
+    pub public_key: [u8; 32],
 }
 
-struct BinaryPacketBuilder {
-    
-}
-
-impl BinaryPacketBuilder {
-    fn new() -> Self {
-        todo!()
+impl Ed25519PublicKeyBlob {
+    pub fn new(public_key: [u8; 32]) -> Self {
+        Self { public_key }
     }
-    fn build(self) -> BinaryPacket {
-        todo!()
+
+    pub fn to_be_bytes(&self) -> Result<Vec<u8>> {
+        let mut data = Vec::new();
+
+        data.extend_from_slice(&SshString::from_str(SSH_ED25519)?.to_be_bytes());
+        data.extend_from_slice(&SshString::new(&self.public_key)?.to_be_bytes());
+
+        Ok(data)
+    }
+
+    pub fn from_be_bytes(bytes: &[u8]) -> Result<Self> {
+        let mut i = 0;
+
+        let (alg,inc) = SshString::from_be_bytes(&bytes[i..])?;
+        check_and_inc(bytes, &mut i, &inc)?;
+
+        if String::from_utf8(alg.bytes)? != SSH_ED25519 {
+            return Err(Error::msg("Invalid Ed25519 public key algorithm name"));
+        }
+
+        let (public_key,inc) = SshString::from_be_bytes(&bytes[i..])?;
+        check_and_inc(bytes, &mut i, &inc)?;
+
+        if public_key.bytes.len() != 32 {
+            return Err(Error::msg("Invalid Ed25519 public key length"));
+        }
+
+        if bytes.len() != i {
+            return Err(Error::msg("Invalid Ed25519 public key blob: trailing bytes"));
+        }
+
+        let public_key: [u8; 32] = public_key.bytes.as_slice().try_into()?;
+
+        Ok(Self { public_key })
+    }
+}
+
+pub struct Ed25519SignatureBlob {
+    pub signature: Signature,
+}
+
+impl Ed25519SignatureBlob {
+    pub fn new(signature: Signature) -> Self {
+        Self { signature }
+    }
+
+    pub fn to_be_bytes(&self) -> Result<Vec<u8>> {
+        let mut data = Vec::new();
+
+        data.extend_from_slice(&SshString::from_str(SSH_ED25519)?.to_be_bytes());
+        data.extend_from_slice(&SshString::new(&self.signature.to_bytes())?.to_be_bytes());
+
+        Ok(data)
+    }
+
+    pub fn from_be_bytes(bytes: &[u8]) -> Result<Self> {
+        let mut i = 0;
+
+        let (alg, inc) = SshString::from_be_bytes(&bytes[i..])?;
+        check_and_inc(bytes, &mut i, &inc)?;
+
+        if String::from_utf8(alg.bytes)? != SSH_ED25519 {
+            return Err(Error::msg("Invalid Ed25519 signature algorithm name"));
+        }
+
+        let (sig, inc) = SshString::from_be_bytes(&bytes[i..])?;
+        check_and_inc(bytes, &mut i, &inc)?;
+
+        if sig.bytes.len() != 64 {
+            return Err(Error::msg("Invalid Ed25519 signature length"));
+        }
+
+        if bytes.len() != i {
+            return Err(Error::msg("Invalid Ed25519 signature blob: trailing bytes"));
+        }
+
+        let sig_bytes: [u8; 64] = sig.bytes.as_slice().try_into()?;
+        let signature = Signature::from_bytes(&sig_bytes);
+
+        Ok(Self { signature })
     }
 }

@@ -1,47 +1,15 @@
-use std::{cmp::max, fmt::Display, marker::PhantomData, str::FromStr};
-use crate::{check_and_inc, data_primitives::SshUint32, kex::dh::{DhGroup, DiffieHellman}};
+use std::{cmp::max, fmt::Display, io::{BufReader, Read}, marker::PhantomData, str::FromStr};
+use crate::{SSH_ED25519, check_and_inc, data_primitives::SshUint32, kex::dh::{DhGroup, DiffieHellman}, messages::{Ed25519PublicKeyBlob, Ed25519SignatureBlob}};
 
 use aes::{Aes128, Aes192, Aes256, cipher::{Array, BlockCipherEncrypt, BlockSizeUser, KeyInit, KeyIvInit, KeySizeUser, StreamCipher, consts::{U16, U326}}};
 use anyhow::{Error, Result};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hmac::{Hmac, Mac, SimpleHmac, digest::{HashMarker, OutputSizeUser, core_api::{self, CoreProxy}}};
 use sha2::{Digest, Sha256, Sha512};
 use rand::{TryRngCore, prelude::*, rngs::OsRng, seq};
 
 pub trait KexImplementor {
-
-}
-
-enum KexAlgorithm {
-    DiffieHellmanSha256(DiffieHellman<Sha256>),
-    DiffieHellmanSha512(DiffieHellman<Sha512>)
-}
-
-impl Display for KexAlgorithm {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            KexAlgorithm::DiffieHellmanSha256(_) => {
-                write!(f, "diffie-hellman-group14-sha256")
-            }
-            KexAlgorithm::DiffieHellmanSha512(diffie_hellman) => {
-                write!(f, "diffie-hellman-group{}-sha512", diffie_hellman.group.id)
-            }
-        }
-    }
-}
-
-
-impl FromStr for KexAlgorithm {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "diffie-hellman-group14-sha256" => Ok(KexAlgorithm::DiffieHellmanSha256(DiffieHellman::new(14)?)),
-            "diffie-hellman-group15-sha512" => Ok(KexAlgorithm::DiffieHellmanSha512(DiffieHellman::new(15)?)),
-            "diffie-hellman-group16-sha512" => Ok(KexAlgorithm::DiffieHellmanSha512(DiffieHellman::new(16)?)),
-            "diffie-hellman-group17-sha512" => Ok(KexAlgorithm::DiffieHellmanSha512(DiffieHellman::new(17)?)),
-            "diffie-hellman-group18-sha512" => Ok(KexAlgorithm::DiffieHellmanSha512(DiffieHellman::new(18)?)),
-            _ => Err(Error::msg(format!("Kex Algorithm Not Found: {}", s)))
-        }
-    }
+    
 }
 
 enum BinaryPacketEncoder {
@@ -114,7 +82,108 @@ impl BinaryPacketEncoder {
         }
     }
 }
+pub enum ServerKeyAlg {
+    Ed25519(Ed25519Signer<SigningKey>),
+}
 
+impl ServerKeyAlg {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ServerKeyAlg::Ed25519(_) => SSH_ED25519,
+        }
+    }
+
+    pub fn public_key_blob(&self) -> Result<Vec<u8>> {
+        match self {
+            ServerKeyAlg::Ed25519(signer) => signer.public_key_blob(),
+        }
+    }
+
+    pub fn sign_exchange_hash(&self, hash: &[u8]) -> Result<Vec<u8>> {
+        match self {
+            ServerKeyAlg::Ed25519(signer) => signer.sign_exchange_hash_blob(hash),
+        }
+    }
+}
+
+pub enum ClientKeyAlg {
+    Ed25519(Ed25519Verifier<VerifyingKey>),
+}
+
+impl ClientKeyAlg {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ClientKeyAlg::Ed25519(_) => SSH_ED25519,
+        }
+    }
+
+    pub fn from_public_key_blob(blob: &[u8]) -> Result<Self> {
+        let public_key_blob = Ed25519PublicKeyBlob::from_be_bytes(blob)?;
+        let verifying_key = VerifyingKey::from_bytes(&public_key_blob.public_key)
+            .map_err(|e| Error::msg(e.to_string()))?;
+
+        Ok(Self::Ed25519(Ed25519Verifier { verifying_key }))
+    }
+
+    pub fn verify_exchange_hash_signature(&self,exchange_hash: &[u8],signature_blob: &[u8]) -> Result<()> {
+        match self {
+            ClientKeyAlg::Ed25519(verifier) => {
+                verifier.verify_exchange_hash_signature_blob(exchange_hash, signature_blob)
+            }
+        }
+    }
+}
+
+pub struct Ed25519Signer<S>
+where
+    S: Signer<Signature>,
+{
+    pub signing_key: S,
+    pub public_key: [u8; 32],
+}
+
+impl<S> Ed25519Signer<S>
+where
+    S: Signer<Signature>,
+{
+    pub fn public_key_blob(&self) -> Result<Vec<u8>> {
+        Ed25519PublicKeyBlob::new(self.public_key).to_be_bytes()
+    }
+
+    pub fn sign_exchange_hash_raw(&self, hash: &[u8]) -> Signature {
+        self.signing_key.sign(hash)
+    }
+
+    pub fn sign_exchange_hash_blob(&self, hash: &[u8]) -> Result<Vec<u8>> {
+        let signature = self.sign_exchange_hash_raw(hash);
+        Ed25519SignatureBlob::new(signature).to_be_bytes()
+    }
+}
+
+pub struct Ed25519Verifier<V>
+where
+    V: Verifier<Signature>,
+{
+    pub verifying_key: V,
+}
+
+impl<V> Ed25519Verifier<V>
+where
+    V: Verifier<Signature>,
+{
+    pub fn verify_signature(&self, msg: &[u8], signature: &Signature) -> Result<()> {
+        self.verifying_key.verify(msg, signature).map_err(|e| Error::msg(e.to_string()))
+    }
+
+    pub fn verify_exchange_hash_signature_blob(&self,exchange_hash: &[u8],signature_blob: &[u8]) -> Result<()> {
+        let signature_blob = Ed25519SignatureBlob::from_be_bytes(signature_blob)?;
+
+        self.verify_signature(exchange_hash, &signature_blob.signature)
+            .map_err(|e| Error::msg(e.to_string()))?;
+
+        Ok(())
+    }
+}
 enum BinaryPacketDecoder {
     Naked,
     Traditional{ cipher: Box<Cipher>, mac: KeyedMac },
@@ -165,31 +234,70 @@ impl BinaryPacketDecoder {
         Ok(packet[payload_start..payload_end].to_vec())
     }
 
-    pub fn decode(&mut self, packet: &[u8], seq_num: u32) -> Result<Vec<u8>> {
+    pub fn decode_from<R: Read>(&mut self, reader: &mut R, seq_num: u32) -> Result<Vec<u8>> {
         match self {
             BinaryPacketDecoder::Naked => {
-                Self::get_payload(packet)
+                let mut buf = vec![0u8; 4];
+                reader.read_exact(&mut buf)?;
+                let packet_length = SshUint32::from_be_bytes(&buf)?.int;
+
+                if packet_length < 5 {
+                    return Err(Error::msg("Invalid packet length"));
+                }
+                
+                if packet_length > 35000 {
+                    return Err(Error::msg("Packet too large"));
+                }
+
+                let mut payload_buf = vec![0u8; packet_length as usize];
+                reader.read_exact(&mut payload_buf)?;
+
+                buf.extend_from_slice(&payload_buf);
+                Self::get_payload(&buf)
             },
             BinaryPacketDecoder::Traditional { cipher, mac } => {
-                let packet_len = packet.len();
+                let first_len = cipher.block_size();
                 let mac_len = mac.mac_len();
             
-                if packet_len < mac_len {
-                    return Err(Error::msg("Packet too short for MAC"));
+                let mut first_enc = vec![0u8; first_len];
+                reader.read_exact(&mut first_enc)?;
+            
+                let mut packet = cipher.decrypt(&first_enc)?;
+            
+                let packet_length = SshUint32::from_be_bytes(&packet[..4])?.int as usize;
+            
+                if packet_length < 5 {
+                    return Err(Error::msg("Invalid packet length"));
                 }
             
-                let data_mac = &packet[(packet_len - mac_len)..];
-                let enc_data = &packet[..(packet_len - mac_len)];
+                if packet_length > 35000 {
+                    return Err(Error::msg("Packet too large"));
+                }
             
-                let data = cipher.decrypt(enc_data)?;
+                let total_packet_len = 4 + packet_length;
             
-                let mut mac_data: Vec<u8> = Vec::new();
+                if total_packet_len < first_len {
+                    return Err(Error::msg("Invalid packet length"));
+                }
+            
+                let remaining_enc_len = total_packet_len - first_len;
+            
+                let mut rest = vec![0u8; remaining_enc_len + mac_len];
+                reader.read_exact(&mut rest)?;
+            
+                let remaining_enc = &rest[..remaining_enc_len];
+                let data_mac = &rest[remaining_enc_len..];
+            
+                let remaining_plain = cipher.decrypt(remaining_enc)?;
+                packet.extend_from_slice(&remaining_plain);
+            
+                let mut mac_data = Vec::with_capacity(4 + packet.len());
                 mac_data.extend_from_slice(&SshUint32::new(seq_num).to_be_bytes());
-                mac_data.extend_from_slice(&data);
+                mac_data.extend_from_slice(&packet);
             
                 mac.verify_mac(&mac_data, data_mac)?;
             
-                Self::get_payload(&data)
+                Self::get_payload(&packet)
             }
         }
     }
@@ -261,11 +369,6 @@ where
     }
 }
 
-enum MacAlgorithm {
-    HmacSha256,
-    HmacSha512
-}
-
 enum KeyedMac {
     HmacSha256(SshHmac<Sha256>),
     HmacSha512(SshHmac<Sha512>)
@@ -300,31 +403,6 @@ impl KeyedMac {
         }
     }
 
-}
-
-impl Display for MacAlgorithm {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MacAlgorithm::HmacSha256 => {
-                write!(f, "hmac-sha2-256")
-            }
-            MacAlgorithm::HmacSha512 => {
-                write!(f, "hmac-sha2-512")
-            }
-        }
-    }
-}
-
-
-impl FromStr for MacAlgorithm {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s {
-            "hmac-sha2-256" => Ok(MacAlgorithm::HmacSha256),
-            "hmac-sha2-512" => Ok(MacAlgorithm::HmacSha512),
-            _ => Err(Error::msg(format!("Mac Algorithm Not Found: {}", s)))
-        }
-    }
 }
 
 struct SshHmac<D> 

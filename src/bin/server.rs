@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{net::TcpListener, path::Path};
 
 use clap::Parser;
 use anyhow::{Error, Result};
@@ -6,8 +6,15 @@ use anyhow::{Error, Result};
 fn main() {
   let args = ServerCli::parse();
 
-  
-  // 
+  let listener = TcpListener::bind(format!("127.0.0.1:{}", args.port)).unwrap();
+  for stream in listener.incoming() {
+      match stream {
+          Ok(stream) => {
+              start_connection(stream);
+          }
+          Err(e) => { eprintln!("BAD") }
+      }
+  }
 
 }
 
