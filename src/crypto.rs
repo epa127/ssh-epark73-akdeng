@@ -1,18 +1,14 @@
-use std::{cmp::max, fmt::Display, io::{BufReader, Read}, marker::PhantomData, str::FromStr};
-use crate::{SSH_ED25519, check_and_inc, data_primitives::SshUint32, kex::dh::{DhGroup, DiffieHellman}, messages::{Ed25519PublicKeyBlob, Ed25519SignatureBlob}};
+use std::{cmp::max, io::Read, marker::PhantomData};
+use crate::{SSH_ED25519, check_and_inc, data_primitives::SshUint32, messages::{Ed25519PublicKeyBlob, Ed25519SignatureBlob}};
 
-use aes::{Aes128, Aes192, Aes256, cipher::{Array, BlockCipherEncrypt, BlockSizeUser, KeyInit, KeyIvInit, KeySizeUser, StreamCipher, consts::{U16, U326}}};
+use aes::{Aes128, Aes192, Aes256, cipher::{BlockCipherEncrypt, BlockSizeUser, KeyInit, KeyIvInit, StreamCipher, consts::U16}};
 use anyhow::{Error, Result};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use hmac::{Hmac, Mac, SimpleHmac, digest::{HashMarker, OutputSizeUser, core_api::{self, CoreProxy}}};
+use hmac::{Mac, SimpleHmac, digest::{OutputSizeUser, core_api}};
 use sha2::{Digest, Sha256, Sha512};
-use rand::{TryRngCore, prelude::*, rngs::OsRng, seq};
+use rand::{TryRngCore, prelude::*, rngs::OsRng};
 
-pub trait KexImplementor {
-    
-}
-
-enum BinaryPacketEncoder {
+pub enum BinaryPacketEncoder {
     Naked,
     Traditional{ cipher: Box<Cipher>, mac: KeyedMac },
     // AeadGcm()
@@ -20,6 +16,12 @@ enum BinaryPacketEncoder {
 }
 
 impl BinaryPacketEncoder {
+    pub fn naked() -> Self { Self::Naked }
+
+    pub fn traditional(cipher: Cipher, mac: KeyedMac) -> Self {
+        Self::Traditional { cipher: Box::new(cipher), mac }
+    }
+
     fn get_padding_increment(&self) -> usize {
         max( 8, match self {
             BinaryPacketEncoder::Naked => 8,
@@ -184,7 +186,7 @@ where
         Ok(())
     }
 }
-enum BinaryPacketDecoder {
+pub enum BinaryPacketDecoder {
     Naked,
     Traditional{ cipher: Box<Cipher>, mac: KeyedMac },
     // AeadGcm()
@@ -192,6 +194,12 @@ enum BinaryPacketDecoder {
 }
 
 impl BinaryPacketDecoder {
+    pub fn naked() -> Self { Self::Naked }
+
+    pub fn traditional(cipher: Cipher, mac: KeyedMac) -> Self {
+        Self::Traditional { cipher: Box::new(cipher), mac }
+    }
+
     fn get_padding_increment(&self) -> usize {
         max( 8, match self {
             BinaryPacketDecoder::Naked => 8,
@@ -304,13 +312,25 @@ impl BinaryPacketDecoder {
 }
 
 #[allow(clippy::enum_variant_names)]
-enum Cipher {
+pub enum Cipher {
     Aes128Ctr(SshAesCtr<Aes128>),
     Aes192Ctr(SshAesCtr<Aes192>),
     Aes256Ctr(SshAesCtr<Aes256>)
 }
 
 impl Cipher {
+    pub fn aes128_ctr(key: &[u8], iv: &[u8]) -> Result<Self> {
+        Ok(Self::Aes128Ctr(SshAesCtr::<Aes128>::new(key, iv)?))
+    }
+
+    pub fn aes192_ctr(key: &[u8], iv: &[u8]) -> Result<Self> {
+        Ok(Self::Aes192Ctr(SshAesCtr::<Aes192>::new(key, iv)?))
+    }
+
+    pub fn aes256_ctr(key: &[u8], iv: &[u8]) -> Result<Self> {
+        Ok(Self::Aes256Ctr(SshAesCtr::<Aes256>::new(key, iv)?))
+    }
+
     fn encrypt(&mut self, input: &[u8]) -> Result<Vec<u8>> {
         match self {
             Cipher::Aes128Ctr(ssh_aes_ctr) => ssh_aes_ctr.encrypt(input),
@@ -334,16 +354,18 @@ impl Cipher {
     }
 }
 
-struct SshAesCtr<C>
+pub struct SshAesCtr<C>
 where
     C: BlockSizeUser<BlockSize = U16> + BlockCipherEncrypt + KeyInit,
+    ctr::Ctr128BE<C>: KeyIvInit + StreamCipher,
 {
-    cipher: aes::cipher::StreamCipherCoreWrapper<ctr::CtrCore<C, ctr::flavors::Ctr128BE>>,
+    cipher: ctr::Ctr128BE<C>,
 }
 
 impl<C> SshAesCtr<C>
 where
     C: BlockSizeUser<BlockSize = U16> + BlockCipherEncrypt + KeyInit,
+    ctr::Ctr128BE<C>: KeyIvInit + StreamCipher,
 {
     fn new(key: &[u8], iv: &[u8]) -> Result<Self> {
         let cipher = ctr::Ctr128BE::<C>::new_from_slices(key, iv)?;
@@ -369,12 +391,20 @@ where
     }
 }
 
-enum KeyedMac {
+pub enum KeyedMac {
     HmacSha256(SshHmac<Sha256>),
     HmacSha512(SshHmac<Sha512>)
 }
 
 impl KeyedMac {
+    pub fn hmac_sha256(key: &[u8]) -> Self {
+        Self::HmacSha256(SshHmac::<Sha256>::new(key))
+    }
+
+    pub fn hmac_sha512(key: &[u8]) -> Self {
+        Self::HmacSha512(SshHmac::<Sha512>::new(key))
+    }
+
     pub fn generate_mac(&self, msg: &[u8]) -> Result<Vec<u8>> {
         match self {
             KeyedMac::HmacSha256(ssh_hmac) => ssh_hmac.generate_mac(msg),
@@ -405,7 +435,7 @@ impl KeyedMac {
 
 }
 
-struct SshHmac<D> 
+pub struct SshHmac<D> 
     where D: Digest + core_api::BlockSizeUser, 
 {
     _hash: PhantomData<D>,

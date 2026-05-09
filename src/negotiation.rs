@@ -1,6 +1,7 @@
 use std::{fmt::Display, str::FromStr};
 
-use anyhow::Error;
+use anyhow::{Error, Result};
+use num_bigint::BigUint;
 use sha2::{Sha256, Sha512};
 
 use crate::kex::dh::DiffieHellman;
@@ -30,7 +31,7 @@ impl FromStr for ServerHostKeyAlgorithm {
     }
 }
 
-enum KexAlgorithm {
+pub enum KexAlgorithm {
     DiffieHellmanSha256(DiffieHellman<Sha256>),
     DiffieHellmanSha512(DiffieHellman<Sha512>)
 }
@@ -63,7 +64,7 @@ impl FromStr for KexAlgorithm {
     }
 }
 
-enum EncryptionAlgorithms{
+pub enum EncryptionAlgorithms{
     Aes128Ctr,
     Aes192Ctr,
     Aes256Ctr
@@ -92,7 +93,7 @@ impl FromStr for EncryptionAlgorithms {
     }
 }
 
-enum MacAlgorithm {
+pub enum MacAlgorithm {
     HmacSha256,
     HmacSha512
 }
@@ -122,7 +123,7 @@ impl FromStr for MacAlgorithm {
     }
 }
 
-enum CompressionAlgorithm {
+pub enum CompressionAlgorithm {
     None
 }
 
@@ -143,6 +144,71 @@ impl FromStr for CompressionAlgorithm {
         match s {
             "none" => Ok(CompressionAlgorithm::None),
             _ => Err(Error::msg(format!("Compression Algorithm Not Found: {}", s)))
+        }
+    }
+}
+
+impl KexAlgorithm {
+    pub fn generate_keypair(&self) -> Result<(BigUint, BigUint)> {
+        match self {
+            KexAlgorithm::DiffieHellmanSha256(dh) => dh.generate_keypair(),
+            KexAlgorithm::DiffieHellmanSha512(dh) => dh.generate_keypair(),
+        }
+    }
+
+    pub fn compute_shared_key(&self, peer_public:BigUint, secret: BigUint) -> BigUint {
+        match self {
+            KexAlgorithm::DiffieHellmanSha256(dh) => dh.generate_shared_key(peer_public, secret),
+            KexAlgorithm::DiffieHellmanSha512(dh) => dh.generate_shared_key(peer_public, secret),
+        }
+    }
+
+    pub fn exchange_hash(
+        &self,
+        client_id: &crate::data_primitives::SshString,
+        server_id: &crate::data_primitives::SshString,
+        client_init: &crate::data_primitives::SshString,
+        server_init: &crate::data_primitives::SshString,
+        host_key: &crate::data_primitives::SshString,
+        client_kex: &crate::data_primitives::SshMpint,
+        server_kex: &crate::data_primitives::SshMpint,
+        shared_secret: &crate::data_primitives::SshMpint,
+    ) -> Result<Vec<u8>> {
+        match self {
+            KexAlgorithm::DiffieHellmanSha256(_) => crate::kex::dh::DiffieHellman::<Sha256>::generate_exchange_hash(
+                client_id, server_id, client_init, server_init, host_key, client_kex, server_kex, shared_secret,
+            ),
+            KexAlgorithm::DiffieHellmanSha512(_) => crate::kex::dh::DiffieHellman::<Sha512>::generate_exchange_hash(
+                client_id, server_id, client_init, server_init, host_key, client_kex, server_kex, shared_secret,
+            ),
+        }
+    }
+
+    pub fn hash_len(&self) -> usize {
+        match self {
+            KexAlgorithm::DiffieHellmanSha256(_) => 32,
+            KexAlgorithm::DiffieHellmanSha512(_) => 64,
+        }
+    }
+}
+
+impl EncryptionAlgorithms {
+    pub fn key_len(&self) -> usize {
+        match self {
+            EncryptionAlgorithms::Aes128Ctr => 16,
+            EncryptionAlgorithms::Aes192Ctr => 24,
+            EncryptionAlgorithms::Aes256Ctr => 32,
+        }
+    }
+
+    pub fn iv_len(&self) -> usize { 16 }
+}
+
+impl MacAlgorithm {
+    pub fn key_len(&self) -> usize {
+        match self {
+            MacAlgorithm::HmacSha256 => 32,
+            MacAlgorithm::HmacSha512 => 64,
         }
     }
 }

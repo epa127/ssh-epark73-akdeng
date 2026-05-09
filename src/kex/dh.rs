@@ -13,6 +13,39 @@ pub struct DiffieHellman<D: Digest> {
 }
 
 impl<D: Digest> DiffieHellman<D> {
+    pub fn generate_keypair(&self) -> Result<(BigUint, BigUint)> {
+      let secret = self.generate_secret_key()?;
+      let public_value = self.group.g.modpow(&secret, &self.group.p);
+
+      Ok((secret, public_value))
+    }
+
+    pub fn compute_shared_key(&self, other_public_val: BigUint, secret_val: BigUint) -> BigUint {
+        self.generate_shared_key(other_public_val, secret_val)
+    }
+
+    pub fn exchange_hash(
+        client_id: &SshString,
+        server_id: &SshString,
+        client_init: &SshString,
+        server_init: &SshString,
+        host_key: &SshString,
+        client_kex: &SshMpint,
+        server_kex: &SshMpint,
+        shared_secret: &SshMpint,
+    ) -> Result<Vec<u8>> {
+        Self::generate_exchange_hash(
+            client_id,
+            server_id,
+            client_init,
+            server_init,
+            host_key,
+            client_kex,
+            server_kex,
+            shared_secret,
+        )
+    }
+    
     pub fn new(group: usize) -> Result<Self> {
       Ok(
         DiffieHellman { 
@@ -47,7 +80,7 @@ impl<D: Digest> DiffieHellman<D> {
       Ok(e.modpow(&x, &self.group.p))
     }
 
-    fn generate_shared_key(&self, other_public_val: BigUint, secret_val: BigUint) -> BigUint {
+    pub fn generate_shared_key(&self, other_public_val: BigUint, secret_val: BigUint) -> BigUint {
       other_public_val.clone().modpow(&secret_val, &self.group.p)
     }
 
@@ -61,7 +94,7 @@ impl<D: Digest> DiffieHellman<D> {
      * mpint     f, exchange value sent by the server
      * mpint     K, the shared secret
      */
-    fn generate_exchange_hash(client_id: &SshString, server_id: &SshString, client_init: &SshString, 
+    pub fn generate_exchange_hash(client_id: &SshString, server_id: &SshString, client_init: &SshString, 
       server_init: &SshString, host_key:&SshString, client_kex: &SshMpint, server_kex: &SshMpint, shared_secret: &SshMpint) -> Result<Vec<u8>> {
       
       let mut digest = D::new();

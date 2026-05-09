@@ -1,9 +1,9 @@
-use std::str::{FromStr, from_utf8};
+use std::str::FromStr;
 
 use anyhow::{Result,Error};
-use num_bigint::{BigInt, BigUint};
+use num_bigint::BigUint;
 
-pub(crate) struct SshBool {
+pub struct SshBool {
     pub bool: bool
 }
 
@@ -25,7 +25,7 @@ impl SshBool {
     }
 }
 
-pub(crate) struct SshUint32 {
+pub struct SshUint32 {
     pub int: u32
 }
 
@@ -47,7 +47,7 @@ impl SshUint32 {
     }
 }
 
-pub(crate)struct SshUint64 {
+pub struct SshUint64 {
     pub int: u64
 }
 
@@ -61,7 +61,7 @@ impl SshUint64 {
             return Err(Error::msg("Buffer is too small (< 8)".to_string()));
         }
 
-        Ok(Self { int: u64::from_be_bytes(bytes[0..4].try_into()?) })
+        Ok(Self { int: u64::from_be_bytes(bytes[0..8].try_into()?) })
     }
 
     pub fn to_be_bytes(&self) -> [u8; 8] {
@@ -70,13 +70,17 @@ impl SshUint64 {
 }
 
 // Only compatible with nonnegative values
-pub(crate)struct SshMpint {
-    int: BigUint
+pub struct SshMpint {
+    pub(crate) int: BigUint
 }
 
 impl SshMpint {
     pub fn new(int: BigUint) -> Self {
         Self { int }
+    }
+
+    pub fn to_biguint(&self) -> BigUint {
+        self.int.clone()
     }
     
     pub fn to_be_bytes(&self) -> Result<Vec<u8>> {
@@ -120,8 +124,8 @@ impl SshMpint {
     }
 }
 
-pub(crate) struct SshString {
-    pub(crate) bytes: Vec<u8>
+pub struct SshString {
+    pub bytes: Vec<u8>
 }
 
 impl SshString {
@@ -177,7 +181,7 @@ impl FromStr for SshString {
         Self::new(s.as_bytes())
     }
 }
-pub(crate) struct SshNameList {
+pub struct SshNameList {
     pub name_list: Vec<String>
 }
 
@@ -239,15 +243,14 @@ impl SshNameList {
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         SshNameList::validate_list(&self.name_list)?;
 
-        let mut bytes: Vec<u8> = Vec::new();
-        bytes.extend_from_slice(&(self.name_list.len() as u32).to_be_bytes());
-
-        for (i, str) in self.name_list.iter().enumerate() {
-            bytes.extend_from_slice(str.as_bytes());
-            if i < self.name_list.len() - 1 {
-                bytes.extend_from_slice(b",");
-            }
+        let name_list = self.name_list.join(",");
+        if name_list.len() > u32::MAX as usize {
+            return Err(Error::msg(format!("Name-list too large: Length cannot be represented with 32 bits (name-list length of {})", name_list.len())));
         }
+
+        let mut bytes: Vec<u8> = Vec::new();
+        bytes.extend_from_slice(&(name_list.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(name_list.as_bytes());
         Ok(bytes)
     }
 }

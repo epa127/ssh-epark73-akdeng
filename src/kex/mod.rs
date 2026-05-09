@@ -5,7 +5,7 @@ use anyhow::{Error, Result};
 pub mod dh;
 
 pub struct KexDhInit {
-    e: SshMpint
+    pub(crate) e: SshMpint
 }
 
 impl Msg for KexDhInit {
@@ -22,6 +22,10 @@ impl Msg for KexDhInit {
     }
 
     fn deserialize(vec: &[u8]) -> Result<Self> {
+        if vec.is_empty() {
+            return Err(Error::msg("Empty buffer!".to_string()));
+        }
+
         let mut i: usize = 0;
         if vec[i] != Self::get_msg_number() {
             return Err(Error::msg(format!("Unexpected message: expected {}, received {}", Self::get_msg_number(), vec[i])));
@@ -40,9 +44,9 @@ impl Msg for KexDhInit {
 }
 
 pub struct KexDhReply {
-    k_s: SshString,
-    f: SshMpint,
-    signature: SshString
+    pub(crate) k_s: SshString,
+    pub(crate) f: SshMpint,
+    pub(crate) signature: SshString
 }
 
 impl Msg for KexDhReply {

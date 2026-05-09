@@ -3,6 +3,7 @@ use std::{hash::Hash, str::FromStr};
 use anyhow::{Error, Result};
 
 use ed25519_dalek::Signature;
+use num_bigint::BigUint;
 use rand::{TryRngCore, rng, rngs::{OsRng, ThreadRng}};
 
 use crate::{DISCONNECT, KEXINIT, NEWKEYS, SSH_DISCONNECT_AUTH_CANCELLED_BY_USER, SSH_DISCONNECT_BY_APPLICATION, SSH_DISCONNECT_COMPRESSION_ERROR, SSH_DISCONNECT_CONNECTION_LOST, SSH_DISCONNECT_HOST_NOT_ALLOWED_TO_CONNECT, SSH_DISCONNECT_ILLEGAL_USER_NAME, SSH_DISCONNECT_MAC_ERROR, SSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE, SSH_DISCONNECT_PROTOCOL_ERROR, SSH_DISCONNECT_PROTOCOL_VERSION_NOT_SUPPORTED, SSH_DISCONNECT_RESERVED, SSH_DISCONNECT_SERVICE_NOT_AVAILABLE, SSH_DISCONNECT_TOO_MANY_CONNECTIONS, SSH_ED25519, check_and_inc, data_primitives::{SshBool, SshNameList, SshString, SshUint32}};
@@ -38,6 +39,60 @@ impl KexInit {
         rng.try_fill_bytes(&mut cookie)?;
         Ok(cookie)
     }
+
+    pub fn default_client() -> Result<Self> {
+        Self::default_transport()
+    }
+
+    pub fn default_server() -> Result<Self> {
+        Self::default_transport()
+    }
+
+    fn default_transport() -> Result<Self> {
+        Ok(Self {
+            cookie: Self::bake_cookie()?,
+            kex: SshNameList::from_vec(vec![
+                "diffie-hellman-group14-sha256".to_string(),
+                "diffie-hellman-group15-sha512".to_string(),
+                "diffie-hellman-group16-sha512".to_string(),
+                "diffie-hellman-group17-sha512".to_string(),
+                "diffie-hellman-group18-sha512".to_string(),
+            ])?,
+            sh_key: SshNameList::from_vec(vec!["ssh-ed25519".to_string()])?,
+            enc_c2s: SshNameList::from_vec(vec![
+                "aes128-ctr".to_string(),
+                "aes192-ctr".to_string(),
+                "aes256-ctr".to_string(),
+            ])?,
+            enc_s2c: SshNameList::from_vec(vec![
+                "aes128-ctr".to_string(),
+                "aes192-ctr".to_string(),
+                "aes256-ctr".to_string(),
+            ])?,
+            mac_c2s: SshNameList::from_vec(vec![
+                "hmac-sha2-256".to_string(),
+                "hmac-sha2-512".to_string(),
+            ])?,
+            mac_s2c: SshNameList::from_vec(vec![
+                "hmac-sha2-256".to_string(),
+                "hmac-sha2-512".to_string(),
+            ])?,
+            comp_c2s: SshNameList::from_vec(vec!["none".to_string()])?,
+            comp_s2c: SshNameList::from_vec(vec!["none".to_string()])?,
+            lang_c2s: SshNameList::new(),
+            lang_s2c: SshNameList::new(),
+            kex_follow: SshBool::new(false),
+        })
+    }
+
+    pub fn kex_algorithms(&self) -> &[String] { &self.kex.name_list }
+    pub fn server_host_key_algorithms(&self) -> &[String] { &self.sh_key.name_list }
+    pub fn enc_c2s(&self) -> &[String] { &self.enc_c2s.name_list }
+    pub fn enc_s2c(&self) -> &[String] { &self.enc_s2c.name_list }
+    pub fn mac_c2s(&self) -> &[String] { &self.mac_c2s.name_list }
+    pub fn mac_s2c(&self) -> &[String] { &self.mac_s2c.name_list }
+    pub fn comp_c2s(&self) -> &[String] { &self.comp_c2s.name_list }
+    pub fn comp_s2c(&self) -> &[String] { &self.comp_s2c.name_list }
 }
 
 impl Msg for KexInit {

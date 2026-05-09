@@ -7,6 +7,7 @@ pub mod data_primitives;
 pub mod network_driver;
 pub mod negotiation;
 pub mod pkg;
+pub mod protoversion;
 
 pub const PROTOVERSION: &str = "2.0";
 pub const SOFTWAREVERSION: &str = "mssh_1.0";
