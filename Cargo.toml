@@ -3,10 +3,21 @@ name = "ssh-epark73-akdeng"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "mssh"
+path = "src/bin/client.rs"
+
+[[bin]]
+name = "msshd"
+path = "src/bin/server.rs"
+
 [dependencies]
+aes = "0.9.0"
 anyhow = "1.0.102"
 clap = { version = "4.5.39", features = ["derive"] }
-color-eyre = "0.6.5"
+ctr = "0.10.0"
+hex-literal = "1.1.0"
 hmac = "0.12.1"
+num-bigint = { version = "0.4.6", features = ["rand"] }
 rand = "0.9.1"
 sha2 = "0.10.9"
